@@ -1,6 +1,6 @@
 const std = @import("std");
-// const config = @import("config.zig");
-// const linear = @import("linear.zig");
+const config = @import("config.zig");
+const linear = @import("linear.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -17,19 +17,22 @@ pub fn main() !void {
 
     std.debug.print("Issues: {any}\n", .{issues});
 
-    // const cfg = try config.load(allocator);
-    // std.debug.print("Config: {any}\n", .{cfg});
+    const cfg = try config.load(allocator);
+    std.debug.print("Config: {any}\n", .{cfg});
 
-    // const labels = try linear.labels.get(cfg);
-    // std.debug.print("Labels: {any}\n", .{labels});
+    std.debug.print("API Key: |{s}|\n", .{cfg.api_key});
+    var client = try linear.client_init(allocator, cfg.api_key);
+
+    const labels = try linear.Labels.get(allocator, cfg, &client);
+    std.debug.print("Labels: {any}\n", .{labels});
 }
 
-const IssueKind = enum {
+pub const IssueKind = enum {
     FIXME,
     TODO,
 
-    pub const ISSUE_KIND_COUNT: u32 = 2;
-    pub const ALL_ISSUES = [ISSUE_KIND_COUNT]IssueKind{ .FIXME, .TODO };
+    pub const COUNT: u32 = 2;
+    pub const ALL_ISSUES = [COUNT]IssueKind{ .FIXME, .TODO };
 
     pub const MAX_LEN: u32 = 5;
 };
