@@ -1,0 +1,15 @@
+.{
+    .name = "FIXME",
+    .version = "0.1.0",
+    .dependencies = .{
+        .graphql = .{
+            .url = "https://github.com/softprops/zig-graphql/archive/refs/tags/v0.2.1.tar.gz",
+            .hash = "122024f3cdb860e523556a93b59c5b23f19bbfa25248821301ab3363fc934db4d5f7",
+        },
+        .@"zig-toml" = .{
+            .url = "https://github.com/probably-neb/zig-toml/archive/6d143db5f9adaf206fcebd8b92113039013b4873.tar.gz",
+            .hash = "1220ced9b2f6943f688ce1e20a40f143d83c4182320e4b9d30e470b010d44b356f0a",
+        },
+    },
+    .paths = .{""},
+}
