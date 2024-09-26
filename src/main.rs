@@ -1,26 +1,38 @@
+#![feature(array_try_map)]
+pub mod config;
+pub mod linear;
+
 use anyhow::*;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let path = std::env::args().skip(1).next().context("no args")?;
     let contents = std::fs::read_to_string(&path)?;
     let issues = extract_issues(&contents, &path);
-
-    dbg!(&issues.issues);
-    dbg!(&issues.issues.len());
+    let config = dbg!(config::load())?;
+    dbg!(linear::Labels::ensure_exist(config).await?);
+    // dbg!(&issues.issues);
+    // dbg!(&issues.issues.len());
 
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum IssueKind {
     FIXME,
     TODO,
+}
+
+impl IssueKind {
+    pub const ISSUE_KIND_COUNT: usize = 2;
+    pub const ALL_ISSUES: [IssueKind; IssueKind::ISSUE_KIND_COUNT] = [IssueKind::FIXME, IssueKind::TODO];
 }
 
 #[derive(Debug)]
 struct Issue<'a> {
     kind: IssueKind,
     txt: &'a str,
+    id: Option<&'a str>,
     file_name: &'a str,
     line_beg: u32,
     line_end: u32,
@@ -111,35 +123,43 @@ fn extract_issues<'a>(input: &'a str, file_name: &'a str) -> IssueList<'a> {
     let mut issues_txt_buf = Vec::<u8>::with_capacity(comments.len() * 20);
     let mut issues = Vec::<Issue<'a>>::with_capacity(comments.len());
 
-    fn identify_type(txt: &str) -> Option<IssueKind> {
+    fn identify_type_and_id(txt: &str) -> Option<(IssueKind, Option<&str>)> {
         const MAX_LEN: usize = 6;
 
         if txt.len() < MAX_LEN {
             return None;
         }
 
-        let label = &txt
+        let issue_txt = &txt
             .trim_ascii_start()
             .trim_start_matches("//")
-            .trim_start_matches('*')
-            .as_bytes()[0..=MAX_LEN]
-            .to_ascii_uppercase();
+            .trim_start_matches('*');
 
-        if label.starts_with(b"FIXME") {
-            return Some(IssueKind::FIXME);
-        }
-        if label.starts_with(b"TODO") {
-            return Some(IssueKind::TODO);
-        }
+        let label = issue_txt.as_bytes()[0..=MAX_LEN].to_ascii_uppercase();
 
-        return None;
+        let kind = if label.starts_with(b"FIXME") {
+            IssueKind::FIXME
+        } else if label.starts_with(b"TODO") {
+            IssueKind::TODO
+        } else {
+            return None;
+        };
+
+        let id = issue_txt
+            .split_once(":")
+            .map(|(_pre, rest)| rest.trim_ascii_start().split_once("]"))
+            .flatten()
+            .filter(|(id, _rest)| id.starts_with('['))
+            .map(|(id, _rest)| id.trim_start_matches('[').trim_end_matches(']'));
+
+        return Some((kind, id))
     }
 
     let mut comments_iter = comments.iter().enumerate();
 
     while let Some((i, comment)) = comments_iter.next() {
         if let Comment::Basic { line, txt } = comment {
-            let Some(kind) = identify_type(txt) else {
+            let Some((kind, id)) = identify_type_and_id(txt) else {
                 continue;
             };
 
@@ -164,7 +184,7 @@ fn extract_issues<'a>(input: &'a str, file_name: &'a str) -> IssueList<'a> {
                 if subsequent_line != prev_line + 1 {
                     break;
                 }
-                if let Some(_) = identify_type(subsequent_txt) {
+                if let Some(_) = identify_type_and_id(subsequent_txt) {
                     break;
                 }
 
@@ -190,13 +210,14 @@ fn extract_issues<'a>(input: &'a str, file_name: &'a str) -> IssueList<'a> {
                     let slice = std::slice::from_raw_parts(&issues_txt_buf[txt_start], txt_len);
                     std::str::from_utf8_unchecked(slice)
                 },
+                id,
                 file_name,
                 kind,
                 line_beg,
                 line_end,
             });
         } else if let Comment::Block { line, txt } = comment {
-            let Some(kind) = identify_type(txt) else {
+            let Some((kind, id)) = identify_type_and_id(txt) else {
                 continue;
             };
 
@@ -212,6 +233,7 @@ fn extract_issues<'a>(input: &'a str, file_name: &'a str) -> IssueList<'a> {
             issues.push(Issue {
                 txt,
                 kind,
+                id,
                 file_name,
                 line_beg: *line,
                 line_end: *line + line_count as u32,
