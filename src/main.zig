@@ -45,11 +45,12 @@ const Issue = struct {
     txt: []const u8,
     id: ?[]const u8,
     file_name: []const u8,
+    col: u32,
     line_beg: u32,
     line_end: u32,
 
     pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Issue {s} ({s}:{d}:{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.line_end });
+        try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
         try writer.print("\t[{d}] ", .{self.txt.len});
         var split_iter = std.mem.splitScalar(u8, self.txt, '\n');
         var i: u32 = 0;
@@ -85,8 +86,8 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
         }
     };
     const Comment = union(enum) {
-        Block: struct { txt: Range, line: u32 },
-        Basic: struct { txt: Range, line: u32 },
+        Block: struct { txt: Range, line: u32, col: u32 },
+        Basic: struct { txt: Range, line: u32, col: u32 },
     };
 
     var comments = std.ArrayList(Comment).init(allocator);
@@ -94,12 +95,22 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
 
     const State = union(enum) {
         None,
-        Basic: struct { start: u32, line: u32 },
-        Block: struct { start: u32, line: u32 },
+        Basic: struct {
+            start: u32,
+            line: u32,
+            col: u32,
+        },
+        Block: struct {
+            start: u32,
+            line: u32,
+            col: u32,
+        },
     };
 
     var state: State = .None;
     var cur_line: u32 = 0;
+
+    var cur_col: u32 = 0;
 
     for (input, 0..) |char, char_index_usize| {
         const char_index: u32 = @intCast(char_index_usize);
@@ -109,17 +120,23 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                     if (char_index + 1 < input.len) {
                         switch (input[char_index + 1]) {
                             '/' => {
-                                state = .{ .Basic = .{ .start = char_index, .line = cur_line } };
+                                state = .{ .Basic = .{ .start = char_index, .line = cur_line, .col = cur_col } };
                             },
                             '*' => {
-                                state = .{ .Block = .{ .start = char_index, .line = cur_line } };
+                                state = .{ .Block = .{ .start = char_index, .line = cur_line, .col = cur_col } };
                             },
-                            '\n' => cur_line += 1,
+                            '\n' => {
+                                cur_line += 1;
+                                cur_col = 0;
+                            },
                             else => {},
                         }
                     }
                 },
-                '\n' => cur_line += 1,
+                '\n' => {
+                    cur_line += 1;
+                    cur_col = 0;
+                },
                 else => {},
             },
             .Basic => |basic| {
@@ -128,11 +145,13 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .Basic = .{
                             .txt = .{ .start = basic.start, .end = char_index },
                             .line = basic.line,
+                            .col = basic.col,
                         },
                     };
                     try comments.append(comment);
                     state = .None;
                     cur_line += 1;
+                    cur_col = 0;
                 }
             },
             .Block => |block| {
@@ -141,14 +160,17 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .Block = .{
                             .txt = .{ .start = block.start, .end = char_index + 2 },
                             .line = block.line,
+                            .col = block.col,
                         },
                     });
                     state = .None;
                 } else if (char == '\n') {
                     cur_line += 1;
+                    cur_col = 0;
                 }
             },
         }
+        cur_col += 1;
     }
 
     var issues_txt_buf = std.ArrayList(u8).init(allocator);
@@ -207,6 +229,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .file_name = file_name,
                         .line_beg = basic.line,
                         .line_end = prev_comment_line_end,
+                        .col = basic.col,
                     });
                 }
             },
@@ -237,6 +260,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .file_name = file_name,
                         .line_beg = block.line,
                         .line_end = block.line + @as(u32, @intCast(line_count)),
+                        .col = block.col,
                     });
                 }
             },
