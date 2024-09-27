@@ -13,9 +13,9 @@ pub fn main() !void {
     const path = args.next() orelse return error.NoArgs;
     const contents = try std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(usize));
 
-    const issues = try extract_issues(allocator, contents, path);
+    const extracted_issues = try extract_issues(allocator, contents, path);
 
-    std.debug.print("Issues: {any}\n", .{issues});
+    std.debug.print("Issues: {any}\n", .{extracted_issues});
 
     const cfg = try config.load(allocator);
     std.debug.print("Config: {any}\n", .{cfg});
@@ -28,6 +28,28 @@ pub fn main() !void {
 
     const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
     std.debug.print("Team ID: |{s}|\n", .{team_id});
+
+    const fake_issues = [3]linear.Issues.NewIssue{ .{
+        .team_id = team_id,
+        .title = "First Issue",
+        .description = "Description for first issue",
+        .label_id = labels[0].id,
+    }, .{
+        .team_id = team_id,
+        .title = "Second Issue",
+        .description = "Description for second issue",
+        .label_id = labels[0].id,
+    }, .{
+        .team_id = team_id,
+        .title = "Third Issue",
+        .description = "Description for third issue",
+        .label_id = labels[0].id,
+    } };
+
+    const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_issues);
+    for (created_issues) |created_issue| {
+        std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
+    }
 }
 
 pub const IssueKind = enum {

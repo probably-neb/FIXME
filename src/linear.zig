@@ -84,7 +84,7 @@ pub const Teams = struct {
                     return error.TeamNotFound;
                 }
                 std.debug.assert(data.teams.nodes.len == 1);
-                return data.teams.nodes[0].id;
+                return try alloc.dupe(u8, data.teams.nodes[0].id);
             },
         }
     }
@@ -93,10 +93,10 @@ pub const Teams = struct {
 pub const Labels = struct {
     pub const Label = struct {
         kind: IssueKind,
-        label_id: []const u8,
+        id: []const u8,
 
         pub fn format(self: *const Label, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try writer.print("Label [{s}, .id = {s}]", .{ @tagName(self.kind), self.label_id });
+            try writer.print("Label [{s}, .id = {s}]", .{ @tagName(self.kind), self.id });
         }
     };
 
@@ -137,7 +137,7 @@ pub const Labels = struct {
                 for (IssueKind.ALL_ISSUES, 0..) |issue_kind, i| {
                     for (data.issueLabels.nodes) |node| {
                         if (std.mem.eql(u8, node.name, config.label_names.label_name_for(issue_kind))) {
-                            issue_ids[i] = node.id;
+                            issue_ids[i] = try alloc.dupe(u8, node.id);
                         }
                     }
                 }
@@ -148,14 +148,195 @@ pub const Labels = struct {
                     }
                 }
                 const labels = [IssueKind.COUNT]Label{
-                    .{ .kind = IssueKind.ALL_ISSUES[0], .label_id = issue_ids[0].? },
-                    .{ .kind = IssueKind.ALL_ISSUES[1], .label_id = issue_ids[1].? },
+                    .{ .kind = IssueKind.ALL_ISSUES[0], .id = issue_ids[0].? },
+                    .{ .kind = IssueKind.ALL_ISSUES[1], .id = issue_ids[1].? },
                 };
                 return labels;
             },
             .errors => |errors| {
                 for (errors) |err| {
                     std.debug.print("Error: {s}", .{err.message});
+                    if (err.path) |p| {
+                        const path = std.mem.join(alloc, "/", p) catch unreachable;
+                        defer alloc.free(path);
+                        std.debug.print(" @ {s}", .{path});
+                    }
+                }
+                return error.RequestFailed;
+            },
+        }
+    }
+};
+
+pub const Issues = struct {
+    pub const NewIssue = struct {
+        label_id: []const u8,
+        description: ?[]const u8,
+        title: []const u8,
+        team_id: []const u8,
+    };
+
+    fn StringHashMap(comptime T: type) type {
+        const Inner = std.StringArrayHashMap(T);
+        return struct {
+            map: Inner,
+
+            const Self = @This();
+
+            pub fn init(allocator: std.mem.Allocator) Self {
+                return .{
+                    .map = Inner.init(allocator),
+                };
+            }
+
+            pub fn keys(self: *const Self) [][]const u8 {
+                return self.map.keys();
+            }
+
+            pub fn put(self: *Self, key: []const u8, value: T) !void {
+                return self.map.put(key, value);
+            }
+
+            pub fn jsonStringify(self: *const Self, writer: anytype) !void {
+                var items_iter = self.map.iterator();
+                try writer.beginObject();
+                while (items_iter.next()) |item| {
+                    try writer.objectField(item.key_ptr.*);
+                    try writer.write(item.value_ptr.*);
+                }
+                try writer.endObject();
+            }
+        };
+    }
+
+    const Output = struct {
+        inner: Inner,
+
+        pub fn init(allocator: std.mem.Allocator) Output {
+            return Inner.init(allocator);
+        }
+
+        const Item = struct {
+            identifier: []const u8,
+            title: []const u8,
+        };
+
+        const Inner = std.ArrayList(Item);
+
+        pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+            {
+                const start = try source.next();
+                if (.object_begin != start) {
+                    std.log.err("Expected object begin, got {s}", .{@tagName(start)});
+                    return error.UnexpectedToken;
+                }
+            }
+
+            var issues_list = Inner.init(alloc);
+
+            while (true) {
+                const issue_key_token: ?std.json.Token = try source.nextAllocMax(alloc, .alloc_if_needed, options.max_value_len.?);
+                if (issue_key_token == null) {
+                    std.log.warn("no created issues", .{});
+                    break;
+                }
+                const issue_key = switch (issue_key_token.?) {
+                    .string, .allocated_string => |slice| slice,
+                    .object_end => break,
+                    else => return error.UnexpectedToken,
+                };
+                if (!std.mem.startsWith(u8, issue_key, "issue")) {
+                    std.log.warn("issue key {s} does not start with 'issue'", .{issue_key});
+                }
+                const value = try std.json.innerParse(struct {
+                    issue: Item,
+                }, alloc, source, options);
+
+                try issues_list.append(value.issue);
+            }
+            return .{ .inner = issues_list };
+        }
+    };
+
+    pub fn create(alloc: std.mem.Allocator, _: Config, client: *graphql.Client, new_issues: []const NewIssue) ![]const Output.Item {
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+
+        const IssueCreateInput = struct {
+            teamId: []const u8,
+            title: []const u8,
+            description: ?[]const u8,
+            labelIds: [1][]const u8,
+        };
+        const Variables = StringHashMap(IssueCreateInput);
+        var issues_map = Variables.init(scratch);
+
+        for (new_issues, 0..) |issue, i| {
+            try issues_map.put(try std.fmt.allocPrint(scratch, "issue{d}", .{i + 1}), .{
+                .teamId = issue.team_id,
+                .title = issue.title,
+                .description = issue.description,
+                .labelIds = .{issue.label_id},
+            });
+        }
+
+        var query = std.ArrayList(u8).init(scratch);
+        {
+            var query_writer = query.writer();
+
+            try query_writer.writeAll("mutation CreateMultipleIssues(\n");
+
+            for (issues_map.keys()) |issue_key| {
+                try query_writer.print("    ${s}: IssueCreateInput!\n", .{issue_key});
+            }
+            try query_writer.writeAll(") {\n");
+
+            for (issues_map.keys()) |issue_key| {
+                try query_writer.print(
+                    \\   {s}: issueCreate(input: ${s}) {{
+                    \\      issue {{
+                    \\        identifier,
+                    \\        title,
+                    \\      }}
+                    \\   }}
+                    \\
+                , .{ issue_key, issue_key });
+            }
+
+            try query_writer.writeAll("}\n");
+        }
+
+        std.debug.print("{s}\n", .{query.items});
+        try std.json.stringify(issues_map, .{ .whitespace = .indent_2 }, std.io.getStdErr().writer());
+
+        const result = client.sendWithVariables(Variables, .{
+            .query = query.items,
+            .variables = issues_map,
+        }, Output) catch |err| {
+            std.log.err(
+                "Create Issues Request failed with {any}",
+                .{err},
+            );
+            if (err == error.NotAuthorized) return error.NotAuthorized;
+            return error.RequestFailed;
+        };
+
+        defer result.deinit();
+        switch (result.value.result()) {
+            .data => |data| {
+                var created_issues = try alloc.alloc(Output.Item, new_issues.len);
+                for (data.inner.items, 0..) |issue, issue_index| {
+                    created_issues[issue_index] = .{
+                        .identifier = try alloc.dupe(u8, issue.identifier),
+                        .title = try alloc.dupe(u8, issue.title),
+                    };
+                }
+                return created_issues;
+            },
+            .errors => |errors| {
+                for (errors) |err| {
+                    std.debug.print("Create Issues Error: {s}", .{err.message});
                     if (err.path) |p| {
                         const path = std.mem.join(alloc, "/", p) catch unreachable;
                         defer alloc.free(path);
