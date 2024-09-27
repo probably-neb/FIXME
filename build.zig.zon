@@ -3,8 +3,10 @@
     .version = "0.1.0",
     .dependencies = .{
         .graphql = .{
-            .url = "https://github.com/softprops/zig-graphql/archive/refs/tags/v0.2.1.tar.gz",
-            .hash = "122024f3cdb860e523556a93b59c5b23f19bbfa25248821301ab3363fc934db4d5f7",
+            .url = "https://github.com/probably-neb/zig-graphql/archive/47d8f2de505f.tar.gz",
+            .hash = "12200de1a8ae9318385294441a33187e4f583d1dcc3bbd21d73e9658ac9b680144f7",
+            // .url = "https://github.com/softprops/zig-graphql/archive/refs/tags/v0.2.1.tar.gz",
+            // .hash = "122024f3cdb860e523556a93b59c5b23f19bbfa25248821301ab3363fc934db4d5f7",
         },
         .@"zig-toml" = .{
             .url = "https://github.com/probably-neb/zig-toml/archive/6d143db5f9adaf206fcebd8b92113039013b4873.tar.gz",
