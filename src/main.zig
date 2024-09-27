@@ -54,40 +54,6 @@ pub fn main() !void {
     }
 }
 
-pub const IssueKind = enum {
-    FIXME,
-    TODO,
-
-    pub const COUNT: u32 = 2;
-    pub const ALL_ISSUES = [COUNT]IssueKind{ .FIXME, .TODO };
-
-    pub const MAX_LEN: u32 = 5;
-    pub const MIN_LEN: u32 = 4;
-};
-
-const Issue = struct {
-    kind: IssueKind,
-    txt: []const u8,
-    id: ?[]const u8,
-    file_name: []const u8,
-    col: u32,
-    line_beg: u32,
-    line_end: u32,
-
-    pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
-        try writer.print("\t[{d}] ", .{self.txt.len});
-        var split_iter = std.mem.splitScalar(u8, self.txt, '\n');
-        var i: u32 = 0;
-        while (split_iter.next()) |line| : (i += 1) {
-            if (i > 0) {
-                try writer.writeAll("\n\t");
-            }
-            try writer.writeAll(line);
-        }
-    }
-};
-
 const Range = struct {
     start: u32,
     end: u32,
@@ -96,10 +62,14 @@ const Range = struct {
     }
 };
 
-// TODO: refactor to shared items + kind: enum {Block, Basic}
-const Comment = union(enum) {
-    Block: struct { txt: Range, line: u32, col: u32 },
-    Basic: struct { txt: Range, line: u32, col: u32 },
+const Comment = struct {
+    txt: Range,
+    line: u32,
+    col: u32,
+    kind: enum {
+        Basic,
+        Block,
+    },
 };
 
 fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Comment {
@@ -154,11 +124,10 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
             .Basic => |basic| {
                 if (char == '\n') {
                     const comment = .{
-                        .Basic = .{
-                            .txt = .{ .start = basic.start, .end = char_index },
-                            .line = basic.line,
-                            .col = basic.col,
-                        },
+                        .kind = .Basic,
+                        .txt = .{ .start = basic.start, .end = char_index },
+                        .line = basic.line,
+                        .col = basic.col,
                     };
                     try comments.append(comment);
                     state = .None;
@@ -169,11 +138,10 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
             .Block => |block| {
                 if (char == '*' and char_index + 1 < input.len and input[char_index + 1] == '/') {
                     try comments.append(.{
-                        .Block = .{
-                            .txt = .{ .start = block.start, .end = char_index + 2 },
-                            .line = block.line,
-                            .col = block.col,
-                        },
+                        .kind = .Block,
+                        .txt = .{ .start = block.start, .end = char_index + 2 },
+                        .line = block.line,
+                        .col = block.col,
                     });
                     state = .None;
                 } else if (char == '\n') {
@@ -188,6 +156,54 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
     return comments.items;
 }
 
+pub const IssueKind = enum {
+    FIXME,
+    TODO,
+
+    pub const COUNT: u32 = 2;
+    pub const ALL_ISSUES = [COUNT]IssueKind{ .FIXME, .TODO };
+
+    pub const MAX_LEN: u32 = 5;
+    pub const MIN_LEN: u32 = 4;
+};
+
+const Issue = struct {
+    kind: IssueKind,
+    txt: []const u8,
+    id: ?[]const u8,
+    file_name: []const u8,
+    col: u32,
+    line_beg: u32,
+    line_end: u32,
+
+    pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
+        try writer.print("\t[{d}] ", .{self.txt.len});
+        var split_iter = std.mem.splitScalar(u8, self.txt, '\n');
+        var i: u32 = 0;
+        while (split_iter.next()) |line| : (i += 1) {
+            if (i > 0) {
+                try writer.writeAll("\n\t");
+            }
+            try writer.writeAll(line);
+        }
+    }
+};
+
+const IssueList = struct {
+    txt_buf: []u8,
+    issues: []Issue,
+    allocator: std.mem.Allocator,
+
+    pub fn format(self: *const IssueList, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("IssueList [\n", .{});
+        for (self.issues) |issue| {
+            try writer.print("  {any}\n", .{issue});
+        }
+        try writer.print("]\n", .{});
+    }
+};
+
 fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []const u8, comments: []const Comment) !IssueList {
     var issues_txt_buf = std.ArrayList(u8).init(allocator);
     var issues = std.ArrayList(Issue).init(allocator);
@@ -195,11 +211,11 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
 
     for (comments, 0..) |comment, comment_index_usize| {
         const comment_index: u32 = @intCast(comment_index_usize);
-        switch (comment) {
-            .Basic => |basic| {
+        switch (comment.kind) {
+            .Basic => {
                 const issue_txt = std.mem.trim(
                     u8,
-                    input[basic.txt.start..basic.txt.end],
+                    input[comment.txt.start..comment.txt.end],
                     " \t/",
                 );
                 const issue_info = try identify_type_and_id(allocator, issue_txt);
@@ -207,16 +223,16 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                     const txt_start = issues_txt_buf.items.len;
                     try issues_txt_buf.appendSlice(issue_txt);
 
-                    var prev_comment_line_end = basic.line;
+                    var prev_comment_line_end = comment.line;
                     var next_comment_index: u32 = comment_index + 1;
 
                     // identify multi-line basic comments
                     // such as this comment
                     while (next_comment_index < comments.len) : (next_comment_index += 1) {
-                        const is_next_comment_basic = comments[next_comment_index] == .Basic;
+                        const is_next_comment_basic = comments[next_comment_index].kind == .Basic;
                         if (!is_next_comment_basic) break;
 
-                        const next_basic_comment = comments[next_comment_index].Basic;
+                        const next_basic_comment = comments[next_comment_index];
                         const next_basic_comment_txt = std.mem.trim(
                             u8,
                             input[next_basic_comment.txt.start..next_basic_comment.txt.end],
@@ -243,16 +259,16 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .txt = undefined,
                         .id = info.id,
                         .file_name = file_name,
-                        .line_beg = basic.line,
+                        .line_beg = comment.line,
                         .line_end = prev_comment_line_end,
-                        .col = basic.col,
+                        .col = comment.col,
                     });
                 }
             },
-            .Block => |block| {
+            .Block => {
                 const issue_txt = std.mem.trim(
                     u8,
-                    input[block.txt.start..block.txt.end],
+                    input[comment.txt.start..comment.txt.end],
                     " \t/*",
                 );
                 const issue_info = try identify_type_and_id(allocator, issue_txt);
@@ -274,9 +290,9 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .txt = undefined,
                         .id = info.id,
                         .file_name = file_name,
-                        .line_beg = block.line,
-                        .line_end = block.line + @as(u32, @intCast(line_count)),
-                        .col = block.col,
+                        .line_beg = comment.line,
+                        .line_end = comment.line + @as(u32, @intCast(line_count)),
+                        .col = comment.col,
                     });
                 }
             },
@@ -295,20 +311,6 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
         .allocator = allocator,
     };
 }
-
-const IssueList = struct {
-    txt_buf: []u8,
-    issues: []Issue,
-    allocator: std.mem.Allocator,
-
-    pub fn format(self: *const IssueList, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("IssueList [\n", .{});
-        for (self.issues) |issue| {
-            try writer.print("  {any}\n", .{issue});
-        }
-        try writer.print("]\n", .{});
-    }
-};
 
 fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct { kind: IssueKind, id: ?[]const u8 } {
     if (txt.len < IssueKind.MAX_LEN) {
