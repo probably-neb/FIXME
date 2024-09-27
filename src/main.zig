@@ -13,42 +13,44 @@ pub fn main() !void {
     const path = args.next() orelse return error.NoArgs;
     const contents = try std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(usize));
 
-    const extracted_issues = try extract_issues(allocator, contents, path);
+    const comments = try extract_comments(allocator, contents);
+    const issues = try extract_issues(allocator, contents, path, comments);
 
-    std.debug.print("Issues: {any}\n", .{extracted_issues});
+    std.debug.print("Issues: {any}\n", .{issues});
 
-    const cfg = try config.load(allocator);
-    std.debug.print("Config: {any}\n", .{cfg});
+    if (false) {
+        const cfg = try config.load(allocator);
+        std.debug.print("Config: {any}\n", .{cfg});
 
-    std.debug.print("API Key: |{s}|\n", .{cfg.api_key});
-    var client = try linear.client_init(allocator, cfg.api_key);
+        std.debug.print("API Key: |{s}|\n", .{cfg.api_key});
+        var client = try linear.client_init(allocator, cfg.api_key);
 
-    const labels = try linear.Labels.get(allocator, cfg, &client);
-    std.debug.print("Labels: {any}\n", .{labels});
+        const labels = try linear.Labels.get(allocator, cfg, &client);
+        std.debug.print("Labels: {any}\n", .{labels});
 
-    const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
-    std.debug.print("Team ID: |{s}|\n", .{team_id});
+        const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
+        std.debug.print("Team ID: |{s}|\n", .{team_id});
+        const fake_issues = [3]linear.Issues.NewIssue{ .{
+            .team_id = team_id,
+            .title = "First Issue",
+            .description = "Description for first issue",
+            .label_id = labels[0].id,
+        }, .{
+            .team_id = team_id,
+            .title = "Second Issue",
+            .description = "Description for second issue",
+            .label_id = labels[0].id,
+        }, .{
+            .team_id = team_id,
+            .title = "Third Issue",
+            .description = "Description for third issue",
+            .label_id = labels[0].id,
+        } };
 
-    const fake_issues = [3]linear.Issues.NewIssue{ .{
-        .team_id = team_id,
-        .title = "First Issue",
-        .description = "Description for first issue",
-        .label_id = labels[0].id,
-    }, .{
-        .team_id = team_id,
-        .title = "Second Issue",
-        .description = "Description for second issue",
-        .label_id = labels[0].id,
-    }, .{
-        .team_id = team_id,
-        .title = "Third Issue",
-        .description = "Description for third issue",
-        .label_id = labels[0].id,
-    } };
-
-    const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_issues);
-    for (created_issues) |created_issue| {
-        std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
+        const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_issues);
+        for (created_issues) |created_issue| {
+            std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
+        }
     }
 }
 
@@ -60,6 +62,7 @@ pub const IssueKind = enum {
     pub const ALL_ISSUES = [COUNT]IssueKind{ .FIXME, .TODO };
 
     pub const MAX_LEN: u32 = 5;
+    pub const MIN_LEN: u32 = 4;
 };
 
 const Issue = struct {
@@ -85,35 +88,22 @@ const Issue = struct {
     }
 };
 
-const IssueList = struct {
-    txt_buf: []u8,
-    issues: []Issue,
-    allocator: std.mem.Allocator,
-
-    pub fn format(self: *const IssueList, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("IssueList [\n", .{});
-        for (self.issues) |issue| {
-            try writer.print("  {any}\n", .{issue});
-        }
-        try writer.print("]\n", .{});
+const Range = struct {
+    start: u32,
+    end: u32,
+    fn new(start: u32, end: u32) @This() {
+        return .{ .start = start, .end = end };
     }
 };
 
-fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []const u8) !IssueList {
-    const Range = struct {
-        start: u32,
-        end: u32,
-        fn new(start: u32, end: u32) @This() {
-            return .{ .start = start, .end = end };
-        }
-    };
-    const Comment = union(enum) {
-        Block: struct { txt: Range, line: u32, col: u32 },
-        Basic: struct { txt: Range, line: u32, col: u32 },
-    };
+// TODO: refactor to shared items + kind: enum {Block, Basic}
+const Comment = union(enum) {
+    Block: struct { txt: Range, line: u32, col: u32 },
+    Basic: struct { txt: Range, line: u32, col: u32 },
+};
 
+fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Comment {
     var comments = std.ArrayList(Comment).init(allocator);
-    defer comments.deinit();
 
     const State = union(enum) {
         None,
@@ -195,11 +185,15 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
         cur_col += 1;
     }
 
+    return comments.items;
+}
+
+fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []const u8, comments: []const Comment) !IssueList {
     var issues_txt_buf = std.ArrayList(u8).init(allocator);
     var issues = std.ArrayList(Issue).init(allocator);
     var issue_ranges = std.ArrayList(Range).init(allocator);
 
-    for (comments.items, 0..) |comment, comment_index_usize| {
+    for (comments, 0..) |comment, comment_index_usize| {
         const comment_index: u32 = @intCast(comment_index_usize);
         switch (comment) {
             .Basic => |basic| {
@@ -218,11 +212,11 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
 
                     // identify multi-line basic comments
                     // such as this comment
-                    while (next_comment_index < comments.items.len) : (next_comment_index += 1) {
-                        const is_next_comment_basic = comments.items[next_comment_index] == .Basic;
+                    while (next_comment_index < comments.len) : (next_comment_index += 1) {
+                        const is_next_comment_basic = comments[next_comment_index] == .Basic;
                         if (!is_next_comment_basic) break;
 
-                        const next_basic_comment = comments.items[next_comment_index].Basic;
+                        const next_basic_comment = comments[next_comment_index].Basic;
                         const next_basic_comment_txt = std.mem.trim(
                             u8,
                             input[next_basic_comment.txt.start..next_basic_comment.txt.end],
@@ -302,16 +296,28 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
     };
 }
 
-fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct { kind: IssueKind, id: ?[]const u8 } {
-    const max_len = IssueKind.MAX_LEN;
+const IssueList = struct {
+    txt_buf: []u8,
+    issues: []Issue,
+    allocator: std.mem.Allocator,
 
-    if (txt.len < max_len) {
+    pub fn format(self: *const IssueList, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("IssueList [\n", .{});
+        for (self.issues) |issue| {
+            try writer.print("  {any}\n", .{issue});
+        }
+        try writer.print("]\n", .{});
+    }
+};
+
+fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct { kind: IssueKind, id: ?[]const u8 } {
+    if (txt.len < IssueKind.MAX_LEN) {
         return null;
     }
-
     const issue_txt = std.mem.trim(u8, txt, " \t/*");
-    var label = allocator.dupe(u8, issue_txt[0..@min(max_len, issue_txt.len)]) catch return null;
-    label = std.ascii.upperString(label, issue_txt[0..@min(max_len, issue_txt.len)]);
+
+    var label = allocator.dupe(u8, issue_txt[0..@min(IssueKind.MAX_LEN, issue_txt.len)]) catch return null;
+    label = std.ascii.upperString(label, issue_txt[0..@min(IssueKind.MAX_LEN, issue_txt.len)]);
     defer allocator.free(label);
 
     const kind = if (std.mem.startsWith(u8, label, "FIXME"))
@@ -322,6 +328,13 @@ fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct 
         return null;
 
     var id: ?[]const u8 = null;
+    var issue_txt_rest = issue_txt;
+    if (std.mem.indexOf(u8, issue_txt_rest, ":")) |colon_idx| {
+        issue_txt_rest = issue_txt_rest[colon_idx + 1 ..];
+    }
+    issue_txt_rest = std.mem.trimLeft(u8, issue_txt_rest, " ");
+    if (issue_txt_rest.len == 0) return null;
+
     if (std.mem.indexOf(u8, issue_txt, ":")) |colon_idx| {
         const rest = std.mem.trim(u8, issue_txt[colon_idx + 1 ..], " ");
 
@@ -334,3 +347,18 @@ fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct 
 
     return .{ .kind = kind, .id = id };
 }
+
+const CreateAndUpdateIssuesList = struct {
+    txt_buf: []const u8,
+    new: []const linear.Issues.NewIssue,
+    update: []const struct {
+        identifier: []const u8,
+        kind: IssueKind,
+        title: []const u8,
+        description: ?[]const u8,
+    },
+};
+
+// fn split_create_and_update_issues(allocator: std.mem.Allocator, issues: IssueList) !CreateAndUpdateIssuesList {
+//
+// }
