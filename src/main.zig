@@ -72,6 +72,27 @@ const Comment = struct {
     },
 };
 
+fn trim_range(input: []const u8, range: Range) Range {
+    var txt = input[range.start..range.end];
+    const start: u32 = start: {
+        const original_len = txt.len;
+        txt = std.mem.trimLeft(u8, txt, "\t/*");
+        const len_diff = original_len - txt.len;
+        break :start @intCast(range.start + len_diff);
+    };
+
+    const end: u32 = end: {
+        const original_len = txt.len;
+        txt = std.mem.trimRight(u8, txt, " \t\n/*");
+        const len_diff = original_len - txt.len;
+        break :end @intCast(range.end - len_diff);
+    };
+    return .{
+        .start = start,
+        .end = end,
+    };
+}
+
 fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Comment {
     var comments = std.ArrayList(Comment).init(allocator);
 
@@ -125,7 +146,10 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
                 if (char == '\n') {
                     const comment = .{
                         .kind = .Basic,
-                        .txt = .{ .start = basic.start, .end = char_index },
+                        .txt = trim_range(
+                            input,
+                            .{ .start = basic.start, .end = char_index },
+                        ),
                         .line = basic.line,
                         .col = basic.col,
                     };
@@ -139,7 +163,10 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
                 if (char == '*' and char_index + 1 < input.len and input[char_index + 1] == '/') {
                     try comments.append(.{
                         .kind = .Block,
-                        .txt = .{ .start = block.start, .end = char_index + 2 },
+                        .txt = trim_range(
+                            input,
+                            .{ .start = block.start, .end = char_index + 2 },
+                        ),
                         .line = block.line,
                         .col = block.col,
                     });
@@ -213,11 +240,8 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
         const comment_index: u32 = @intCast(comment_index_usize);
         switch (comment.kind) {
             .Basic => {
-                const issue_txt = std.mem.trim(
-                    u8,
-                    input[comment.txt.start..comment.txt.end],
-                    " \t/",
-                );
+                const issue_txt = input[comment.txt.start..comment.txt.end];
+
                 const issue_info = try identify_type_and_id(allocator, issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
@@ -233,11 +257,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         if (!is_next_comment_basic) break;
 
                         const next_basic_comment = comments[next_comment_index];
-                        const next_basic_comment_txt = std.mem.trim(
-                            u8,
-                            input[next_basic_comment.txt.start..next_basic_comment.txt.end],
-                            " \t/",
-                        );
+                        const next_basic_comment_txt = input[next_basic_comment.txt.start..next_basic_comment.txt.end];
 
                         const is_next_comment_on_next_line = next_basic_comment.line == prev_comment_line_end + 1;
                         const has_issue_info = try identify_type_and_id(allocator, next_basic_comment_txt) != null;
@@ -266,11 +286,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                 }
             },
             .Block => {
-                const issue_txt = std.mem.trim(
-                    u8,
-                    input[comment.txt.start..comment.txt.end],
-                    " \t/*",
-                );
+                const issue_txt = input[comment.txt.start..comment.txt.end];
                 const issue_info = try identify_type_and_id(allocator, issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
