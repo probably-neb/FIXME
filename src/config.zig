@@ -22,7 +22,7 @@ pub const LabelNames = struct {
     FIXME: ?[]const u8,
     TODO: ?[]const u8,
 
-    pub fn label_name_for(label_names: *const @This(), issue_kind: @import("main.zig").IssueKind) []const u8 {
+    pub fn label_name_for(label_names: *const @This(), issue_kind: @import("main.zig").Issue.Kind) []const u8 {
         return switch (issue_kind) {
             .FIXME => label_names.FIXME orelse "FIXME",
             .TODO => label_names.TODO orelse "TODO",

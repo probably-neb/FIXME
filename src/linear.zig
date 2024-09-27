@@ -2,7 +2,7 @@ const std = @import("std");
 const graphql = @import("graphql");
 
 const Config = @import("config.zig").Config;
-const IssueKind = @import("main.zig").IssueKind;
+const IssueKind = @import("main.zig").Issue.Kind;
 
 const URL: []const u8 = "https://api.linear.app/graphql";
 

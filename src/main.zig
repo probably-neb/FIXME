@@ -76,7 +76,7 @@ fn trim_range(input: []const u8, range: Range) Range {
     var txt = input[range.start..range.end];
     const start: u32 = start: {
         const original_len = txt.len;
-        txt = std.mem.trimLeft(u8, txt, "\t/*");
+        txt = std.mem.trimLeft(u8, txt, " \t/*");
         const len_diff = original_len - txt.len;
         break :start @intCast(range.start + len_diff);
     };
@@ -183,25 +183,32 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
     return comments.items;
 }
 
-pub const IssueKind = enum {
-    FIXME,
-    TODO,
-
-    pub const COUNT: u32 = 2;
-    pub const ALL_ISSUES = [COUNT]IssueKind{ .FIXME, .TODO };
-
-    pub const MAX_LEN: u32 = 5;
-    pub const MIN_LEN: u32 = 4;
-};
-
 const Issue = struct {
-    kind: IssueKind,
+    kind: Kind,
     txt: []const u8,
-    id: ?[]const u8,
+    id: ?ID,
     file_name: []const u8,
     col: u32,
     line_beg: u32,
     line_end: u32,
+
+    pub const Kind = enum {
+        FIXME,
+        TODO,
+
+        pub const COUNT: u32 = 2;
+        pub const ALL_ISSUES = [COUNT]Issue.Kind{ .FIXME, .TODO };
+
+        pub const MAX_LEN: u32 = 5;
+        pub const MIN_LEN: u32 = 4;
+    };
+
+    const ID = struct {
+        prefix: [PREFIX_LEN]u8,
+        num: u32,
+
+        const PREFIX_LEN = 3;
+    };
 
     pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
@@ -242,7 +249,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
             .Basic => {
                 const issue_txt = input[comment.txt.start..comment.txt.end];
 
-                const issue_info = try identify_type_and_id(allocator, issue_txt);
+                const issue_info = try identify_type_and_id(issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
                     try issues_txt_buf.appendSlice(issue_txt);
@@ -260,7 +267,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         const next_basic_comment_txt = input[next_basic_comment.txt.start..next_basic_comment.txt.end];
 
                         const is_next_comment_on_next_line = next_basic_comment.line == prev_comment_line_end + 1;
-                        const has_issue_info = try identify_type_and_id(allocator, next_basic_comment_txt) != null;
+                        const has_issue_info = try identify_type_and_id(next_basic_comment_txt) != null;
                         if (!is_next_comment_on_next_line or has_issue_info) break;
 
                         try issues_txt_buf.append('\n');
@@ -287,7 +294,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
             },
             .Block => {
                 const issue_txt = input[comment.txt.start..comment.txt.end];
-                const issue_info = try identify_type_and_id(allocator, issue_txt);
+                const issue_info = try identify_type_and_id(issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
 
@@ -328,40 +335,68 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
     };
 }
 
-fn identify_type_and_id(allocator: std.mem.Allocator, txt: []const u8) !?struct { kind: IssueKind, id: ?[]const u8 } {
-    if (txt.len < IssueKind.MAX_LEN) {
+fn identify_type_and_id(txt: []const u8) !?struct { kind: Issue.Kind, id: ?Issue.ID } {
+    if (txt.len < Issue.Kind.MAX_LEN) {
         return null;
     }
-    const issue_txt = std.mem.trim(u8, txt, " \t/*");
 
-    var label = allocator.dupe(u8, issue_txt[0..@min(IssueKind.MAX_LEN, issue_txt.len)]) catch return null;
-    label = std.ascii.upperString(label, issue_txt[0..@min(IssueKind.MAX_LEN, issue_txt.len)]);
-    defer allocator.free(label);
-
-    const kind = if (std.mem.startsWith(u8, label, "FIXME"))
-        IssueKind.FIXME
-    else if (std.mem.startsWith(u8, label, "TODO"))
-        IssueKind.TODO
+    std.debug.print("TXT: '{s}'\n", .{txt});
+    const kind = if (std.mem.startsWith(u8, txt, "FIXME"))
+        Issue.Kind.FIXME
+    else if (std.mem.startsWith(u8, txt, "TODO"))
+        Issue.Kind.TODO
     else
         return null;
 
-    var id: ?[]const u8 = null;
-    var issue_txt_rest = issue_txt;
-    if (std.mem.indexOf(u8, issue_txt_rest, ":")) |colon_idx| {
-        issue_txt_rest = issue_txt_rest[colon_idx + 1 ..];
-    }
-    issue_txt_rest = std.mem.trimLeft(u8, issue_txt_rest, " ");
-    if (issue_txt_rest.len == 0) return null;
-
-    if (std.mem.indexOf(u8, issue_txt, ":")) |colon_idx| {
-        const rest = std.mem.trim(u8, issue_txt[colon_idx + 1 ..], " ");
-
-        if (std.mem.startsWith(u8, rest, "[")) {
-            if (std.mem.indexOf(u8, rest, "]")) |bracket_idx| {
-                id = try allocator.dupe(u8, rest[1..bracket_idx]);
-            }
+    const id: ?Issue.ID = id: {
+        var issue_txt_rest = txt;
+        if (std.mem.indexOf(u8, txt, ":")) |colon_idx| {
+            issue_txt_rest = issue_txt_rest[colon_idx + 1 ..];
         }
-    }
+        issue_txt_rest = std.mem.trimLeft(u8, issue_txt_rest, " ");
+        if (issue_txt_rest.len == 0) break :id null;
+
+        const has_open_brace = issue_txt_rest[0] == '[';
+        const close_brace_idx = if (has_open_brace) std.mem.indexOfScalar(u8, issue_txt_rest, ']') else null;
+        const has_close_brace = close_brace_idx != null;
+
+        if (!has_open_brace or !has_close_brace) break :id null;
+
+        const id = std.mem.trim(
+            u8,
+            issue_txt_rest[1..close_brace_idx.?],
+            " ",
+        );
+
+        // expect [prefix-num]
+        const dash_idx = std.mem.indexOfScalar(u8, id, '-');
+        const id_has_dash = dash_idx != null;
+        if (!id_has_dash) break :id null;
+
+        const prefix = prefix: {
+            const maybe_prefix = id[0..dash_idx.?];
+            if (maybe_prefix.len != Issue.ID.PREFIX_LEN) {
+                std.log.warn("comment is not valid linear identifier: expected [ABC-123] got {s}", .{id});
+                break :id null;
+            }
+
+            var prefix_buf: [Issue.ID.PREFIX_LEN]u8 = undefined;
+            for (0..Issue.ID.PREFIX_LEN) |i| {
+                prefix_buf[i] = maybe_prefix[i];
+            }
+
+            break :prefix prefix_buf;
+        };
+
+        const num = std.fmt.parseInt(u32, id[dash_idx.? + 1 ..], 10) catch {
+            break :id null;
+        };
+
+        break :id .{
+            .prefix = prefix,
+            .num = num,
+        };
+    };
 
     return .{ .kind = kind, .id = id };
 }
@@ -371,7 +406,7 @@ const CreateAndUpdateIssuesList = struct {
     new: []const linear.Issues.NewIssue,
     update: []const struct {
         identifier: []const u8,
-        kind: IssueKind,
+        kind: Issue.Kind,
         title: []const u8,
         description: ?[]const u8,
     },
