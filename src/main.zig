@@ -25,6 +25,9 @@ pub fn main() !void {
 
     const labels = try linear.Labels.get(allocator, cfg, &client);
     std.debug.print("Labels: {any}\n", .{labels});
+
+    const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
+    std.debug.print("Team ID: |{s}|\n", .{team_id});
 }
 
 pub const IssueKind = enum {

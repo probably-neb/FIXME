@@ -21,6 +21,75 @@ const RequestError = error{
     NotAuthorized,
 };
 
+pub const Teams = struct {
+    pub fn get_id_of_config_team(alloc: std.mem.Allocator, config: Config, client: *graphql.Client) ![]const u8 {
+        const result = client.sendWithVariables(
+            struct {
+                filter: struct {
+                    key: struct {
+                        eq: []const u8,
+                    },
+                },
+            },
+            .{
+                .query =
+                \\query Teams($filter: TeamFilter) {
+                \\  teams(filter: $filter) {
+                \\    nodes {
+                \\      id,
+                \\    }
+                \\  }
+                \\}
+                ,
+                .variables = .{
+                    .filter = .{
+                        .key = .{
+                            .eq = config.team_key,
+                        },
+                    },
+                },
+            },
+            struct {
+                teams: struct {
+                    nodes: []struct {
+                        id: []const u8,
+                    },
+                },
+            },
+        ) catch |err| {
+            std.log.err(
+                "Request failed with {any}",
+                .{err},
+            );
+            if (err == error.NotAuthorized) return error.NotAuthorized;
+            return error.RequestFailed;
+        };
+
+        defer result.deinit();
+        switch (result.value.result()) {
+            .errors => |errors| {
+                for (errors) |err| {
+                    std.debug.print("Error: {s}", .{err.message});
+                    if (err.path) |p| {
+                        const path = std.mem.join(alloc, "/", p) catch unreachable;
+                        defer alloc.free(path);
+                        std.debug.print(" @ {s}", .{path});
+                    }
+                }
+                return error.RequestFailed;
+            },
+            .data => |data| {
+                if (data.teams.nodes.len == 0) {
+                    std.log.err("Team with key '{s}' not found", .{config.team_key});
+                    return error.TeamNotFound;
+                }
+                std.debug.assert(data.teams.nodes.len == 1);
+                return data.teams.nodes[0].id;
+            },
+        }
+    }
+};
+
 pub const Labels = struct {
     pub const Label = struct {
         kind: IssueKind,
