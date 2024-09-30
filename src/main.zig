@@ -287,7 +287,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                     }
 
                     const txt_range = Range{
-                        .start = @intCast(txt_start),
+                        .start = @intCast(txt_start + info.trim),
                         .end = @intCast(issues_txt_buf.items.len),
                     };
                     try issue_ranges.append(txt_range);
@@ -313,7 +313,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                     const line_count = std.mem.count(u8, issue_txt, "\n");
 
                     const txt_range = Range{
-                        .start = @intCast(txt_start),
+                        .start = @intCast(txt_start + info.trim),
                         .end = @intCast(issues_txt_buf.items.len),
                     };
                     try issue_ranges.append(txt_range);
@@ -345,12 +345,13 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
     };
 }
 
-fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.ID } {
+fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.ID, trim: u32 } {
     if (txt.len < Issue.Kind.MAX_LEN) {
         return null;
     }
 
-    std.debug.print("TXT: '{s}'\n", .{txt});
+    var trim: u32 = 0;
+
     const kind = if (std.mem.startsWith(u8, txt, "FIXME"))
         Issue.Kind.FIXME
     else if (std.mem.startsWith(u8, txt, "TODO"))
@@ -361,16 +362,21 @@ fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.
     const id: ?Issue.ID = id: {
         var issue_txt_rest = txt;
         if (std.mem.indexOf(u8, txt, ":")) |colon_idx| {
+            trim += @intCast(colon_idx + 1);
             issue_txt_rest = issue_txt_rest[colon_idx + 1 ..];
         }
+        const pre_trim_len = issue_txt_rest.len;
         issue_txt_rest = std.mem.trimLeft(u8, issue_txt_rest, " ");
         if (issue_txt_rest.len == 0) break :id null;
+        trim += @intCast(pre_trim_len - issue_txt_rest.len);
 
         const has_open_brace = issue_txt_rest[0] == '[';
         const close_brace_idx = if (has_open_brace) std.mem.indexOfScalar(u8, issue_txt_rest, ']') else null;
         const has_close_brace = close_brace_idx != null;
 
         if (!has_open_brace or !has_close_brace) break :id null;
+
+        trim += @intCast(close_brace_idx.? + 1);
 
         const id = std.mem.trim(
             u8,
@@ -408,7 +414,15 @@ fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.
         };
     };
 
-    return .{ .kind = kind, .id = id };
+    {
+        const txt_no_info = txt[trim..];
+        const txt_no_info_trimmed = std.mem.trimLeft(u8, txt_no_info, " ");
+
+        // add length of leading whitespace to trim
+        trim += @intCast(txt_no_info.len - txt_no_info_trimmed.len);
+    }
+
+    return .{ .kind = kind, .id = id, .trim = trim };
 }
 
 const CreateAndUpdateIssuesList = struct {
