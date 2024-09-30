@@ -30,22 +30,26 @@ pub fn main() !void {
 
         const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
         std.debug.print("Team ID: |{s}|\n", .{team_id});
-        const fake_issues = [3]linear.Issues.NewIssue{ .{
-            .team_id = team_id,
-            .title = "First Issue",
-            .description = "Description for first issue",
-            .label_id = labels[0].id,
-        }, .{
-            .team_id = team_id,
-            .title = "Second Issue",
-            .description = "Description for second issue",
-            .label_id = labels[0].id,
-        }, .{
-            .team_id = team_id,
-            .title = "Third Issue",
-            .description = "Description for third issue",
-            .label_id = labels[0].id,
-        } };
+        const fake_issues = [3]linear.Issues.NewIssue{
+            .{
+                .team_id = team_id,
+                .title = "First Issue",
+                .description = "Description for first issue",
+                .label_id = labels[0].id,
+            },
+            .{
+                .team_id = team_id,
+                .title = "Second Issue",
+                .description = "Description for second issue",
+                .label_id = labels[0].id,
+            },
+            .{
+                .team_id = team_id,
+                .title = "Third Issue",
+                .description = "Description for third issue",
+                .label_id = labels[0].id,
+            },
+        };
 
         const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_issues);
         for (created_issues) |created_issue| {
@@ -249,7 +253,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
             .Basic => {
                 const issue_txt = input[comment.txt.start..comment.txt.end];
 
-                const issue_info = try identify_type_and_id(issue_txt);
+                const issue_info = identify_type_and_id(issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
                     try issues_txt_buf.appendSlice(issue_txt);
@@ -267,7 +271,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         const next_basic_comment_txt = input[next_basic_comment.txt.start..next_basic_comment.txt.end];
 
                         const is_next_comment_on_next_line = next_basic_comment.line == prev_comment_line_end + 1;
-                        const has_issue_info = try identify_type_and_id(next_basic_comment_txt) != null;
+                        const has_issue_info = identify_type_and_id(next_basic_comment_txt) != null;
                         if (!is_next_comment_on_next_line or has_issue_info) break;
 
                         try issues_txt_buf.append('\n');
@@ -294,7 +298,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
             },
             .Block => {
                 const issue_txt = input[comment.txt.start..comment.txt.end];
-                const issue_info = try identify_type_and_id(issue_txt);
+                const issue_info = identify_type_and_id(issue_txt);
                 if (issue_info) |info| {
                     const txt_start = issues_txt_buf.items.len;
 
@@ -335,7 +339,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
     };
 }
 
-fn identify_type_and_id(txt: []const u8) !?struct { kind: Issue.Kind, id: ?Issue.ID } {
+fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.ID } {
     if (txt.len < Issue.Kind.MAX_LEN) {
         return null;
     }
