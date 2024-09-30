@@ -187,7 +187,6 @@ const Issue = struct {
     kind: Kind,
     txt: []const u8,
     id: ?ID,
-    file_name: []const u8,
     col: u32,
     line_beg: u32,
     line_end: u32,
@@ -216,7 +215,7 @@ const Issue = struct {
     };
 
     pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
+        try writer.print("Issue {s} ({d}:{d}-{d})\n", .{ @tagName(self.kind), self.line_beg, self.col, self.line_end });
         const new_prefix: *const ID.Prefix = "NEW";
         try writer.print("\t[{any}] ", .{self.id orelse Issue.ID{ .prefix = new_prefix.*, .num = 0 }});
         var split_iter = std.mem.splitScalar(u8, self.txt, '\n');
@@ -231,12 +230,13 @@ const Issue = struct {
 };
 
 const IssueList = struct {
+    file_name: []const u8,
     txt_buf: []u8,
     issues: []Issue,
     allocator: std.mem.Allocator,
 
     pub fn format(self: *const IssueList, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("IssueList [\n", .{});
+        try writer.print("IssueList ({s}) [\n", .{self.file_name});
         for (self.issues) |issue| {
             try writer.print("  {any}\n", .{issue});
         }
@@ -291,7 +291,6 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .kind = info.kind,
                         .txt = undefined,
                         .id = info.id,
-                        .file_name = file_name,
                         .line_beg = comment.line,
                         .line_end = prev_comment_line_end,
                         .col = comment.col,
@@ -318,7 +317,6 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .kind = info.kind,
                         .txt = undefined,
                         .id = info.id,
-                        .file_name = file_name,
                         .line_beg = comment.line,
                         .line_end = comment.line + @as(u32, @intCast(line_count)),
                         .col = comment.col,
@@ -335,6 +333,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
     }
 
     return IssueList{
+        .file_name = file_name,
         .txt_buf = issues_txt_buf.items,
         .issues = issues.items,
         .allocator = allocator,
