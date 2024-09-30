@@ -56,6 +56,23 @@ pub fn main() !void {
             std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
         }
     }
+
+    var test_identfiers = std.ArrayList(Issue.ID).init(allocator);
+    try test_identfiers.ensureTotalCapacity(issues.issues.len);
+    const new_prefix: *const Issue.ID.Prefix = "NEW";
+    for (issues.issues, 0..) |*issue, issue_num| {
+        if (issue.id != null) {
+            issue.*.id = null;
+        }
+        try test_identfiers.append(Issue.ID{
+            .prefix = new_prefix.*,
+            .num = @intCast(issue_num),
+        });
+    }
+
+    var dbg_file = try std.fs.cwd().createFile("./account.updated.ts", .{});
+    defer dbg_file.close();
+    try update_issues_in_txt(allocator, contents, dbg_file.writer(), issues.issues, test_identfiers.items);
 }
 
 const Range = struct {
@@ -420,17 +437,55 @@ fn identify_type_and_id(txt: []const u8) ?struct { kind: Issue.Kind, id: ?Issue.
     return .{ .kind = kind, .id = id, .trim = trim };
 }
 
-const CreateAndUpdateIssuesList = struct {
-    txt_buf: []const u8,
-    new: []const linear.Issues.NewIssue,
-    update: []const struct {
-        identifier: []const u8,
-        kind: Issue.Kind,
-        title: []const u8,
-        description: ?[]const u8,
-    },
-};
+fn update_issues_in_txt(alloc: std.mem.Allocator, txt: []const u8, writer: anytype, issues: []const Issue, identifiers: []const Issue.ID) !void {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const scratch = arena.allocator();
 
-// fn split_create_and_update_issues(allocator: std.mem.Allocator, issues: IssueList) !CreateAndUpdateIssuesList {
-//
-// }
+    const line_count = std.mem.count(u8, txt, "\n");
+    var lines_with_comments = try std.DynamicBitSet.initEmpty(scratch, line_count + 1);
+    for (issues) |issue| {
+        lines_with_comments.set(issue.line_beg);
+    }
+
+    var line_iter = std.mem.split(u8, txt, "\n");
+    var line_index: u32 = 0;
+    while (line_iter.next()) |line| : (line_index += 1) {
+        if (line_index > 0) {
+            try writer.writeAll("\n");
+        }
+        const line_has_comment = lines_with_comments.isSet(line_index);
+        if (!line_has_comment) {
+            try writer.writeAll(line);
+            continue;
+        }
+
+        var issue: ?Issue = null;
+        var identifier: ?Issue.ID = null;
+        for (issues, 0..) |check_issue, issue_index| {
+            if (check_issue.line_beg == line_index) {
+                issue = issues[issue_index];
+                identifier = identifiers[issue_index];
+                break;
+            }
+        }
+        std.debug.assert(issue != null);
+        std.debug.assert(identifier != null);
+        std.debug.assert(line_index == issue.?.line_beg);
+
+        // std.debug.print("line={d} col={d} {s}\n", .{ issue.?.line_beg, issue.?.col, line });
+
+        const line_pre = line[0..issue.?.col];
+        const line_post = line[issue.?.col..];
+
+        try writer.writeAll(line_pre);
+        if (issue.?.col > 0 and line[issue.?.col - 1] != ' ') {
+            try writer.writeAll(" ");
+        }
+        try writer.print("[{s}-{d}]", .{ identifier.?.prefix, identifier.?.num });
+        if (line.len > issue.?.col and line[issue.?.col] != ' ') {
+            try writer.writeAll(" ");
+        }
+        try writer.writeAll(line_post);
+    }
+}
