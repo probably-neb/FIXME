@@ -212,11 +212,17 @@ const Issue = struct {
         num: u32,
 
         const PREFIX_LEN = 3;
+
+        const Prefix = [PREFIX_LEN]u8;
+        pub fn format(self: *const ID, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return writer.print("{s}-{d}", .{ self.prefix, self.num });
+        }
     };
 
     pub fn format(self: *const Issue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("Issue {s} ({s}:{d}:{d}-{d})\n", .{ @tagName(self.kind), self.file_name, self.line_beg, self.col, self.line_end });
-        try writer.print("\t[{d}] ", .{self.txt.len});
+        const new_prefix: *const ID.Prefix = "NEW";
+        try writer.print("\t[{any}] ", .{self.id orelse Issue.ID{ .prefix = new_prefix.*, .num = 0 }});
         var split_iter = std.mem.splitScalar(u8, self.txt, '\n');
         var i: u32 = 0;
         while (split_iter.next()) |line| : (i += 1) {
