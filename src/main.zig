@@ -127,14 +127,10 @@ fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Co
                     if (char_index + 1 < input.len) {
                         switch (input[char_index + 1]) {
                             '/' => {
-                                state = .{ .Basic = .{ .start = char_index, .line = cur_line, .col = cur_col } };
+                                state = .{ .Basic = .{ .start = char_index, .line = cur_line, .col = cur_col + 1 } };
                             },
                             '*' => {
-                                state = .{ .Block = .{ .start = char_index, .line = cur_line, .col = cur_col } };
-                            },
-                            '\n' => {
-                                cur_line += 1;
-                                cur_col = 0;
+                                state = .{ .Block = .{ .start = char_index, .line = cur_line, .col = cur_col + 1 } };
                             },
                             else => {},
                         }
