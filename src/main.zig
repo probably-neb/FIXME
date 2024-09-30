@@ -293,7 +293,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .id = info.id,
                         .line_beg = comment.line,
                         .line_end = prev_comment_line_end,
-                        .col = comment.col,
+                        .col = comment.col + info.trim,
                     });
                 }
             },
@@ -319,7 +319,7 @@ fn extract_issues(allocator: std.mem.Allocator, input: []const u8, file_name: []
                         .id = info.id,
                         .line_beg = comment.line,
                         .line_end = comment.line + @as(u32, @intCast(line_count)),
-                        .col = comment.col,
+                        .col = comment.col + info.trim,
                     });
                 }
             },
