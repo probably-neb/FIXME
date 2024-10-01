@@ -210,19 +210,19 @@ pub const Issues = struct {
         };
     }
 
-    const Output = struct {
+    const CreateOutput = struct {
         inner: Inner,
 
-        pub fn init(allocator: std.mem.Allocator) Output {
-            return Inner.init(allocator);
-        }
+        const Inner = std.ArrayList(Item);
 
         const Item = struct {
             identifier: []const u8,
             title: []const u8,
         };
 
-        const Inner = std.ArrayList(Item);
+        pub fn init(allocator: std.mem.Allocator) CreateOutput {
+            return Inner.init(allocator);
+        }
 
         pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
             {
@@ -271,7 +271,7 @@ pub const Issues = struct {
         }
     };
 
-    pub fn create(alloc: std.mem.Allocator, _: Config, client: *graphql.Client, new_issues: []const NewIssue) ![]const Output.Item {
+    pub fn create(alloc: std.mem.Allocator, _: Config, client: *graphql.Client, new_issues: []const NewIssue) ![]const CreateOutput.Item {
         var arena = std.heap.ArenaAllocator.init(alloc);
         defer arena.deinit();
         const scratch = arena.allocator();
@@ -326,7 +326,7 @@ pub const Issues = struct {
         const result = client.sendWithVariables(Variables, .{
             .query = query.items,
             .variables = issues_map,
-        }, Output) catch |err| {
+        }, CreateOutput) catch |err| {
             std.log.err(
                 "Create Issues Request failed with {any}",
                 .{err},
@@ -338,7 +338,160 @@ pub const Issues = struct {
         defer result.deinit();
         switch (result.value.result()) {
             .data => |data| {
-                var created_issues = try alloc.alloc(Output.Item, new_issues.len);
+                var created_issues = try alloc.alloc(CreateOutput.Item, new_issues.len);
+                for (data.inner.items, 0..) |issue, issue_index| {
+                    created_issues[issue_index] = .{
+                        .identifier = try alloc.dupe(u8, issue.identifier),
+                        .title = try alloc.dupe(u8, issue.title),
+                    };
+                }
+                return created_issues;
+            },
+            .errors => |errors| {
+                for (errors) |err| {
+                    std.debug.print("Create Issues Error: {s}", .{err.message});
+                    if (err.path) |p| {
+                        const path = std.mem.join(alloc, "/", p) catch unreachable;
+                        defer alloc.free(path);
+                        std.debug.print(" @ {s}", .{path});
+                    }
+                }
+                return error.RequestFailed;
+            },
+        }
+    }
+
+    fn JSONPrefixMap(comptime T: type, comptime prefix: []const u8) type {
+        const Inner = std.ArrayList(T);
+
+        // if (!std.meta.hasFn(T, "jsonStringify")) {
+        //     std.debug.print("WARNING: " ++ @typeName(T) ++ " does not have a jsonStringify function", .{});
+        // }
+
+        // prefix + 8 bytes for the number
+        const PREFIX_BUF_LENGTH = prefix.len + 8;
+
+        return struct {
+            arr: Inner,
+
+            const Self = @This();
+
+            pub fn init(allocator: std.mem.Allocator) Self {
+                return .{
+                    .arr = Inner.init(allocator),
+                };
+            }
+
+            pub fn deinit(self: *Self) void {
+                self.arr.deinit();
+            }
+
+            pub fn prefixFor(index: u32) [PREFIX_BUF_LENGTH + 1:0]u8 {
+                var buf: [PREFIX_BUF_LENGTH + 1]u8 = undefined;
+                try std.fmt.bufPrintZ(&buf, "{s}{d}", .{ prefix, index });
+                return buf;
+            }
+
+            pub fn jsonStringify(self: *const Self, writer: anytype) !void {
+                try writer.beginObject();
+                var buf: [PREFIX_BUF_LENGTH]u8 = undefined;
+                for (self.arr.items, 0..) |item, item_index| {
+                    const key = std.fmt.bufPrint(&buf, "{s}{d}", .{ prefix, item_index }) catch unreachable;
+                    try writer.objectField(key);
+                    try writer.write(item);
+                }
+                try writer.endObject();
+            }
+
+            test "linear.issues.JSONPrefixMap.prefixFor" {
+                const dummy_prefix = "dummy";
+                const self = JSONPrefixMap(u32, dummy_prefix); //.init(std.testing.allocator);
+                const computed = self.prefixFor(std.math.maxInt(u32));
+                const expected = dummy_prefix ++ std.fmt.comptimePrint("{d}", std.math.maxInt(u32));
+                try std.testing.expectEqualStrings(computed, expected);
+            }
+        };
+    }
+
+    pub const ExistingIssue = struct {
+        id: @import("main.zig").Issue.ID,
+        title: []const u8,
+        description: ?[]const u8,
+    };
+
+    pub fn update(alloc: std.mem.Allocator, _: Config, client: *graphql.Client, existing_issues: []const ExistingIssue) ![]const CreateOutput.Item {
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+
+        const IssueUpdateInput = struct {
+            title: []const u8,
+            description: []const u8,
+        };
+        const issue_input_prefix = "issueInput";
+        const Variables = JSONPrefixMap(IssueUpdateInput, issue_input_prefix);
+        var issues_map = Variables.init(scratch);
+        try issues_map.arr.ensureTotalCapacity(existing_issues.len);
+
+        for (existing_issues) |issue| {
+            try issues_map.arr.append(.{
+                .title = issue.title,
+                .description = issue.description orelse "",
+            });
+        }
+
+        var query = std.ArrayList(u8).init(scratch);
+        {
+            var query_writer = query.writer();
+
+            try query_writer.writeAll("mutation UpdateMultipleIssues(\n");
+
+            for (0..issues_map.arr.items.len) |issue_index| {
+                try query_writer.print("    ${s}{d}: IssueUpdateInput!\n", .{ issue_input_prefix, issue_index });
+            }
+            try query_writer.writeAll(") {\n");
+
+            for (0..issues_map.arr.items.len) |issue_index| {
+                const issue_id = existing_issues[issue_index].id;
+                try query_writer.print(
+                    \\   issueUpdate{d}: issueUpdate(input: ${s}{d}, id: "{s}-{d}") {{
+                    \\      issue {{
+                    \\        identifier,
+                    \\        title,
+                    \\      }}
+                    \\   }}
+                    \\
+                , .{
+                    issue_index,
+                    issue_input_prefix,
+                    issue_index,
+                    issue_id.prefix,
+                    issue_id.num,
+                });
+            }
+
+            try query_writer.writeAll("}\n");
+        }
+
+        std.debug.print("{s}\n", .{query.items});
+        try std.json.stringify(issues_map, .{ .whitespace = .indent_2 }, std.io.getStdErr().writer());
+
+        const result = client.sendWithVariables(Variables, .{
+            .query = query.items,
+            .variables = issues_map,
+        }, CreateOutput) catch |err| {
+            std.log.err(
+                "Update Issues Request failed with {any}",
+                .{err},
+            );
+            if (err == error.NotAuthorized) return error.NotAuthorized;
+            return error.RequestFailed;
+        };
+
+        defer result.deinit();
+        switch (result.value.result()) {
+            .data => |data| {
+                var created_issues = try alloc.alloc(CreateOutput.Item, existing_issues.len);
                 for (data.inner.items, 0..) |issue, issue_index| {
                     created_issues[issue_index] = .{
                         .identifier = try alloc.dupe(u8, issue.identifier),

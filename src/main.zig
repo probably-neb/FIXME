@@ -18,7 +18,7 @@ pub fn main() !void {
 
     std.debug.print("Issues: {any}\n", .{issues});
 
-    if (false) {
+    if (true) {
         const cfg = try config.load(allocator);
         std.debug.print("Config: {any}\n", .{cfg});
 
@@ -30,31 +30,56 @@ pub fn main() !void {
 
         const team_id = try linear.Teams.get_id_of_config_team(allocator, cfg, &client);
         std.debug.print("Team ID: |{s}|\n", .{team_id});
-        const fake_issues = [3]linear.Issues.NewIssue{
+
+        const fake_existing_issues = [3]linear.Issues.ExistingIssue{
             .{
-                .team_id = team_id,
+                .id = Issue.ID.new("FIX".*, 43),
                 .title = "First Issue",
                 .description = "Description for first issue",
-                .label_id = labels[0].id,
             },
             .{
-                .team_id = team_id,
+                .id = Issue.ID.new("FIX".*, 44),
                 .title = "Second Issue",
                 .description = "Description for second issue",
-                .label_id = labels[0].id,
             },
             .{
-                .team_id = team_id,
-                .title = "Third Issue",
-                .description = "Description for third issue",
-                .label_id = labels[0].id,
+                .id = Issue.ID.new("FIX".*, 45),
+                .title = "Third Issue with no description",
+                // .description = "Description for third issue",
+                .description = null,
             },
         };
 
-        const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_issues);
-        for (created_issues) |created_issue| {
-            std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
+        const updated_issues = try linear.Issues.update(allocator, cfg, &client, &fake_existing_issues);
+        for (updated_issues) |updated_issue| {
+            std.debug.print("UPDATED {s}: {s}\n", .{ updated_issue.identifier, updated_issue.title });
         }
+
+        // const fake_new_issues = [3]linear.Issues.NewIssue{
+        //     .{
+        //         .team_id = team_id,
+        //         .title = "First Issue",
+        //         .description = "Description for first issue",
+        //         .label_id = labels[0].id,
+        //     },
+        //     .{
+        //         .team_id = team_id,
+        //         .title = "Second Issue",
+        //         .description = "Description for second issue",
+        //         .label_id = labels[0].id,
+        //     },
+        //     .{
+        //         .team_id = team_id,
+        //         .title = "Third Issue",
+        //         .description = "Description for third issue",
+        //         .label_id = labels[0].id,
+        //     },
+        // };
+        //
+        // const created_issues = try linear.Issues.create(allocator, cfg, &client, &fake_new_issues);
+        // for (created_issues) |created_issue| {
+        //     std.debug.print("CREATED {s}: {s}\n", .{ created_issue.identifier, created_issue.title });
+        // }
     }
 
     var test_identfiers = std.ArrayList(Issue.ID).init(allocator);
@@ -200,7 +225,7 @@ fn extract_c_style_comments(allocator: std.mem.Allocator, input: []const u8) ![]
     return comments.items;
 }
 
-const Issue = struct {
+pub const Issue = struct {
     kind: Kind,
     txt: []const u8,
     id: ?ID,
@@ -219,14 +244,18 @@ const Issue = struct {
         pub const MIN_LEN: u32 = 4;
     };
 
-    const ID = struct {
+    pub const ID = struct {
         prefix: [PREFIX_LEN]u8,
         num: u32,
 
         const PREFIX_LEN = 3;
 
         const Prefix = [PREFIX_LEN]u8;
-        pub fn format(self: *const ID, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+
+        pub fn new(prefix: Prefix, num: u32) ID {
+            return .{ .prefix = prefix, .num = num };
+        }
+        pub fn formait(self: *const ID, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             return writer.print("{s}-{d}", .{ self.prefix, self.num });
         }
     };
