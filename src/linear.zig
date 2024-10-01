@@ -3,6 +3,7 @@ const graphql = @import("graphql");
 
 const Config = @import("config.zig").Config;
 const IssueKind = @import("main.zig").Issue.Kind;
+const assert = @import("assert.zig");
 
 const URL: []const u8 = "https://api.linear.app/graphql";
 
@@ -245,8 +246,20 @@ pub const Issues = struct {
                     .object_end => break,
                     else => return error.UnexpectedToken,
                 };
-                if (!std.mem.startsWith(u8, issue_key, "issue")) {
-                    std.log.warn("issue key {s} does not start with 'issue'", .{issue_key});
+
+                // assert the index of the issue_key is the same as the next index in our list of issues
+                {
+                    const just_prefix = std.mem.trimRight(u8, issue_key, "0123456789");
+                    if (just_prefix.len == issue_key.len) {
+                        std.log.err("returned issue key `{s}` does not end with index", .{issue_key});
+                        return error.UnexpectedToken;
+                    }
+                    const just_index = issue_key[just_prefix.len..];
+                    const parsed_index = std.fmt.parseUnsigned(usize, just_index, 10) catch {
+                        std.log.err("returned issue key `{s}` does not end with index", .{issue_key});
+                        return error.UnexpectedToken;
+                    };
+                    assert.eql(parsed_index, issues_list.items.len);
                 }
                 const value = try std.json.innerParse(struct {
                     issue: Item,
@@ -273,7 +286,7 @@ pub const Issues = struct {
         var issues_map = Variables.init(scratch);
 
         for (new_issues, 0..) |issue, i| {
-            try issues_map.put(try std.fmt.allocPrint(scratch, "issue{d}", .{i + 1}), .{
+            try issues_map.put(try std.fmt.allocPrint(scratch, "issue{d}", .{i}), .{
                 .teamId = issue.team_id,
                 .title = issue.title,
                 .description = issue.description,
