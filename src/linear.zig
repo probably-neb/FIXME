@@ -426,7 +426,40 @@ pub const Issues = struct {
 
         const IssueUpdateInput = struct {
             title: []const u8,
-            description: []const u8,
+            description: ?[]const u8,
+
+            pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+                try writer.beginObject();
+
+                try writer.objectField("title");
+                try writer.write(self.title);
+
+                if (self.description) |desc| {
+                    try writer.objectField("description");
+                    try writer.write(desc);
+                } else {
+                    // empty prose mirror doc is required to set description to empty string, passing description as "" doesn't work
+                    try writer.objectField("descriptionData");
+                    try writer.write(
+                        .{
+                            .type = "doc",
+                            .content = [1]struct { type: []const u8 }{
+                                .{
+                                    .type = "paragraph",
+                                },
+                            },
+                        },
+                    );
+                    // TODO: once updated to zig version with writer.beginWriteRaw() use this for efficiency
+                    // try writer.beginWriteRaw();
+                    // try writer.stream.writeAll(
+                    //     \\ {"type":"doc","content":[{"type":"paragraph"} \\]}
+                    //     ,
+                    // );
+                    // try writer.endWriteRaw();
+                }
+                try writer.endObject();
+            }
         };
         const issue_input_prefix = "issueInput";
         const Variables = JSONPrefixMap(IssueUpdateInput, issue_input_prefix);
@@ -436,7 +469,7 @@ pub const Issues = struct {
         for (existing_issues) |issue| {
             try issues_map.arr.append(.{
                 .title = issue.title,
-                .description = issue.description orelse "",
+                .description = issue.description,
             });
         }
 
