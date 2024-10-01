@@ -13,7 +13,7 @@ pub fn main() !void {
     const path = args.next() orelse return error.NoArgs;
     const contents = try std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(usize));
 
-    const comments = try extract_comments(allocator, contents);
+    const comments = try extract_c_style_comments(allocator, contents);
     const issues = try extract_issues(allocator, contents, path, comments);
 
     std.debug.print("Issues: {any}\n", .{issues});
@@ -114,7 +114,7 @@ fn trim_range(input: []const u8, range: Range) Range {
     };
 }
 
-fn extract_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Comment {
+fn extract_c_style_comments(allocator: std.mem.Allocator, input: []const u8) ![]const Comment {
     var comments = std.ArrayList(Comment).init(allocator);
 
     const State = union(enum) {
@@ -472,8 +472,6 @@ fn update_issues_in_txt(alloc: std.mem.Allocator, txt: []const u8, writer: anyty
         std.debug.assert(issue != null);
         std.debug.assert(identifier != null);
         std.debug.assert(line_index == issue.?.line_beg);
-
-        // std.debug.print("line={d} col={d} {s}\n", .{ issue.?.line_beg, issue.?.col, line });
 
         const line_pre = line[0..issue.?.col];
         const line_post = line[issue.?.col..];
